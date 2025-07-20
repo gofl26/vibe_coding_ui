@@ -1,6 +1,7 @@
 // ISO 8601 -> mm:ss 변환
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as SecureStore from 'expo-secure-store';
 import React, { useState } from 'react';
 import { FlatList, Image, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-root-toast';
@@ -20,9 +21,12 @@ function parseDuration(iso: string) {
 // 서버에서 검색 결과를 받아오는 함수
 async function fetchSongs(page: number, pageSize: number, query: string): Promise<SongResponse> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), query });
-  const token = (typeof window !== 'undefined' && window.localStorage)
-    ? window.localStorage.getItem('token')
-    : null;
+  let token: string | null = null;
+  if (Platform.OS === 'web') {
+    token = window.localStorage.getItem('token');
+  } else {
+    token = await SecureStore.getItemAsync('token');
+  }
   const res = await fetch(`https://youtube.ssrhouse.store/api/search?${params.toString()}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -30,9 +34,12 @@ async function fetchSongs(page: number, pageSize: number, query: string): Promis
   return await res.json();
 }
 async function fetchPlaylists() {
-  const token = (typeof window !== 'undefined' && window.localStorage)
-    ? window.localStorage.getItem('token')
-    : null;
+  let token: string | null = null;
+  if (Platform.OS === 'web') {
+    token = window.localStorage.getItem('token');
+  } else {
+    token = await SecureStore.getItemAsync('token');
+  }
   const res = await fetch('https://youtube.ssrhouse.store/api/playList', {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -75,16 +82,17 @@ type SongResponse = {
 
 export default function SearchScreen() {
   // 토큰 가져오기 (localStorage)
-  function getToken() {
-    if (typeof window !== 'undefined' && window.localStorage) {
+  async function getToken() {
+    if (Platform.OS === 'web') {
       return window.localStorage.getItem('token');
+    } else {
+      return await SecureStore.getItemAsync('token');
     }
-    return null;
   }
 
   // 플레이리스트에 음악 추가
   async function addToPlaylist(playlistId: number, item: { videoId: string; title: string; thumbnail: string }) {
-    const token = getToken();
+    const token = await getToken();
     const res = await fetch('https://youtube.ssrhouse.store/api/playList', {
       method: 'POST',
       headers: {
@@ -105,7 +113,7 @@ export default function SearchScreen() {
   }
   // 플레이리스트 생성
   async function createPlaylist(name: string) {
-    const token = getToken();
+    const token = await getToken();
     const res = await fetch('https://youtube.ssrhouse.store/api/playList', {
       method: 'POST',
       headers: {
@@ -408,9 +416,12 @@ export default function SearchScreen() {
                             minWidth: 0,
                           }}
                           onPress={async () => {
-                            const token = (typeof window !== 'undefined' && window.localStorage)
-                              ? window.localStorage.getItem('token')
-                              : null;
+                            let token: string | null = null;
+                            if (Platform.OS === 'web') {
+                              token = window.localStorage.getItem('token');
+                            } else {
+                              token = await SecureStore.getItemAsync('token');
+                            }
                             const playUrl = `https://youtube.ssrhouse.store/api/play?id=${selectedSong?.id?.videoId}`;
                             if (Platform.OS === 'web') {
                               try {
@@ -428,7 +439,19 @@ export default function SearchScreen() {
                                 setAudioUrl(null);
                               }
                             } else {
-                              setAudioUrl(playUrl);
+                              try {
+                                const res = await fetch(playUrl, {
+                                  headers: token ? { Authorization: `Bearer ${token}` } : {},
+                                });
+                                if (res.ok) {
+                                  await res.blob(); // blob 미사용, 필요시 별도 처리
+                                  setAudioUrl(playUrl); // 실제 오디오 재생은 별도 구현 필요
+                                } else {
+                                  setAudioUrl('');
+                                }
+                              } catch {
+                                setAudioUrl('');
+                              }
                             }
                             setIsPlaying(true);
                           }}

@@ -1,5 +1,6 @@
 import MusicPlayerBar from '@/components/MusicPlayerBar';
 import { useFocusEffect } from '@react-navigation/native';
+import * as SecureStore from 'expo-secure-store';
 import React, { useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Platform, Text, TouchableOpacity, View } from 'react-native';
 
@@ -27,9 +28,12 @@ function decodeHtmlEntities(str: string) {
             .replace(/&#39;/g, "'");
 }
 async function fetchPlaylists() {
-  const token = (typeof window !== 'undefined' && window.localStorage)
-    ? window.localStorage.getItem('token')
-    : null;
+  let token: string | null = null;
+  if (Platform.OS === 'web') {
+    token = window.localStorage.getItem('token');
+  } else {
+    token = await SecureStore.getItemAsync('token');
+  }
   const res = await fetch('https://youtube.ssrhouse.store/api/playList', {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -51,6 +55,9 @@ export default function PlaylistTab() {
   const [selectedPlaylist, setSelectedPlaylist] = useState<any | null>(null);
   // 마지막 재생한 플레이리스트 상태 추가
   const [lastPlayedPlaylist, setLastPlayedPlaylist] = useState<any | null>(null);
+  // 삭제 모드 및 선택 곡 상태 추가
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedSongs, setSelectedSongs] = useState<string[]>([]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -138,40 +145,115 @@ export default function PlaylistTab() {
           </View>
           {selectedPlaylist.items && selectedPlaylist.items.length > 0 ? (
             <>
+              {/* 삭제 모드 상태 및 선택 곡 관리 */}
+              {typeof window !== 'undefined' && window.localStorage ? null : null}
+              {/* 삭제 모드 토글 및 삭제하기 버튼 */}
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 10, width: 340 }}>
+                {!deleteMode ? (
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 4, paddingVertical: 2 }}
+                    onPress={() => {
+                      setDeleteMode(true);
+                      setSelectedSongs([]);
+                    }}
+                  >
+                    <Text style={{ color: '#6366f1', fontWeight: 'bold', fontSize: 14 }}>목록 삭제</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#6366f1', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 8, marginRight: 8 }}
+                      onPress={() => setDeleteMode(false)}
+                    >
+                      <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>취소</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ backgroundColor: selectedSongs.length > 0 ? '#a5b4fc' : '#e5e7eb', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 8 }}
+                      disabled={selectedSongs.length === 0}
+                      onPress={async () => {
+                        let token: string | null = null;
+                        if (Platform.OS === 'web') {
+                          token = window.localStorage.getItem('token');
+                        } else {
+                          token = await SecureStore.getItemAsync('token');
+                        }
+                        try {
+                          const res = await fetch('https://youtube.ssrhouse.store/api/playList/item', {
+                            method: 'DELETE',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                            },
+                            body: JSON.stringify({
+                              playlistId: selectedPlaylist.id,
+                              videoIds: selectedSongs,
+                            }),
+                          });
+                          if (res.ok) {
+                            // 삭제 성공 시 목록 새로고침
+                            const updated = selectedPlaylist.items.filter((s: any) => !selectedSongs.includes(s.video_id));
+                            setSelectedPlaylist({ ...selectedPlaylist, items: updated });
+                            setDeleteMode(false);
+                            setSelectedSongs([]);
+                          } else {
+                            alert('삭제에 실패했습니다.');
+                          }
+                        } catch {
+                          alert('삭제에 실패했습니다.');
+                        }
+                      }}
+                    >
+                      <Text style={{ color: selectedSongs.length > 0 ? '#6366f1' : '#888', fontWeight: 'bold', fontSize: 15 }}>삭제하기</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+              {/* 곡 목록 렌더링 (삭제 모드일 때 체크박스 표시) */}
               <FlatList
                 data={selectedPlaylist.items}
                 keyExtractor={it => it.video_id}
                 style={{ marginBottom: 80 }}
                 renderItem={({ item: song }) => (
-                  <TouchableOpacity onPress={async () => {
-                    setPlayingSong(song);
-                    setIsPlaying(true);
-                    const token = (typeof window !== 'undefined' && window.localStorage)
-                      ? window.localStorage.getItem('token')
-                      : null;
-                    const playUrl = `https://youtube.ssrhouse.store/api/play?id=${song.video_id}`;
-                    if (Platform.OS === 'web') {
-                      // 토큰을 헤더에 넣어서 audioUrl을 받아옴 (web에서 직접 src에 토큰을 못 넣으므로 fetch로 blob)
-                      try {
-                        const res = await fetch(playUrl, {
-                          headers: token ? { Authorization: `Bearer ${token}` } : {},
-                        });
-                        if (res.ok) {
-                          const blob = await res.blob();
-                          const url = URL.createObjectURL(blob);
-                          setAudioUrl(url);
-                        } else {
+                  <TouchableOpacity
+                    onPress={async () => {
+                      if (deleteMode) {
+                        setSelectedSongs(prev =>
+                          prev.includes(song.video_id)
+                            ? prev.filter(id => id !== song.video_id)
+                            : [...prev, song.video_id]
+                        );
+                        return;
+                      }
+                      setPlayingSong(song);
+                      setIsPlaying(true);
+                      let token: string | null = null;
+                      if (Platform.OS === 'web') {
+                        token = window.localStorage.getItem('token');
+                      } else {
+                        token = await SecureStore.getItemAsync('token');
+                      }
+                      const playUrl = `https://youtube.ssrhouse.store/api/play?id=${song.video_id}`;
+                      if (Platform.OS === 'web') {
+                        try {
+                          const res = await fetch(playUrl, {
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                          });
+                          if (res.ok) {
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            setAudioUrl(url);
+                          } else {
+                            setAudioUrl(null);
+                          }
+                        } catch {
                           setAudioUrl(null);
                         }
-                      } catch {
-                        setAudioUrl(null);
+                      } else {
+                        setAudioUrl(playUrl);
                       }
-                    } else {
-                      setAudioUrl(playUrl);
-                    }
-                    setLastPlayedPlaylist(selectedPlaylist);
-                  }}>
-                    <View style={{
+                      setLastPlayedPlaylist(selectedPlaylist);
+                    }}
+                    style={{
                       flexDirection: 'row',
                       alignItems: 'center',
                       marginBottom: 14,
@@ -183,15 +265,24 @@ export default function PlaylistTab() {
                       shadowOpacity: 0.04,
                       shadowRadius: 4,
                       elevation: 1,
-                    }}>
-                      <Image source={{ uri: song.thumbnail }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee', marginRight: 14 }} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 16, color: playingSong?.video_id === song.video_id ? '#6366f1' : '#222', fontWeight: 'bold' }} numberOfLines={1} ellipsizeMode="tail">
-                          {decodeHtmlEntities(song.title)}
-                          {playingSong?.video_id === song.video_id ? ' ▶' : ''}
-                        </Text>
-                        <Text style={{ fontSize: 13, color: '#888', marginTop: 2 }}>{song.channel_title || ''} {song.duration ? `· ${secondsToMMSS(durationToSeconds(song.duration))}` : ''}</Text>
+                    }}
+                  >
+                    {deleteMode && (
+                      <View style={{ marginRight: 10 }}>
+                        <View style={{ width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: '#6366f1', backgroundColor: selectedSongs.includes(song.video_id) ? '#6366f1' : 'white', justifyContent: 'center', alignItems: 'center' }}>
+                          {selectedSongs.includes(song.video_id) && (
+                            <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16 }}>✓</Text>
+                          )}
+                        </View>
                       </View>
+                    )}
+                    <Image source={{ uri: song.thumbnail }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee', marginRight: 14 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 16, color: playingSong?.video_id === song.video_id ? '#6366f1' : '#222', fontWeight: 'bold' }} numberOfLines={1} ellipsizeMode="tail">
+                        {decodeHtmlEntities(song.title)}
+                        {playingSong?.video_id === song.video_id ? ' ▶' : ''}
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#888', marginTop: 2 }}>{song.channel_title || ''} {song.duration ? `· ${secondsToMMSS(durationToSeconds(song.duration))}` : ''}</Text>
                     </View>
                   </TouchableOpacity>
                 )}
@@ -221,9 +312,12 @@ export default function PlaylistTab() {
               if (!lastPlayedPlaylist || !lastPlayedPlaylist.items) return;
               const items = lastPlayedPlaylist.items;
               const idx = items.findIndex((it: any) => it.video_id === playingSong.video_id);
-              const token = (typeof window !== 'undefined' && window.localStorage)
-                ? window.localStorage.getItem('token')
-                : null;
+              let token: string | null = null;
+              if (Platform.OS === 'web') {
+                token = window.localStorage.getItem('token');
+              } else {
+                token = await SecureStore.getItemAsync('token');
+              }
               const getPlayUrl = (videoId: string) => `https://youtube.ssrhouse.store/api/play?id=${videoId}`;
               let nextSong = null;
               if (isShuffle) {

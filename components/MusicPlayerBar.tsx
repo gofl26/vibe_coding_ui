@@ -1,3 +1,5 @@
+import { Audio, AVPlaybackStatus } from 'expo-av';
+import * as SecureStore from 'expo-secure-store';
 import React from 'react';
 import { Image, Platform, Text, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -51,6 +53,44 @@ const MusicPlayerBar: React.FC<Props> = ({
   secondsToMMSS,
   onEnd,
 }) => {
+  const soundRef = React.useRef<Audio.Sound | null>(null);
+
+  // 앱에서 오디오 재생
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' && audioUrl) {
+      (async () => {
+        if (soundRef.current) {
+          console.log('[expo-av] 기존 사운드 언로드');
+          await soundRef.current.unloadAsync();
+          soundRef.current = null;
+        }
+        try {
+          console.log('[expo-av] Audio.Sound.createAsync 호출', audioUrl);
+          const { sound } = await Audio.Sound.createAsync(
+            { uri: audioUrl },
+            { shouldPlay: true },
+            (status: AVPlaybackStatus) => {
+              console.log('[expo-av] status 콜백', status);
+              if ('didJustFinish' in status && status.didJustFinish && onEnd) onEnd();
+              if ('isPlaying' in status) setIsPlaying(status.isPlaying ?? false);
+            }
+          );
+          soundRef.current = sound;
+          console.log('[expo-av] soundRef.current 할당 완료');
+        } catch (err) {
+          console.log('[expo-av] Audio.Sound.createAsync 에러', err);
+        }
+      })();
+    }
+    return () => {
+      if (soundRef.current) {
+        console.log('[expo-av] 언마운트 시 사운드 언로드');
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+    };
+  }, [audioUrl, onEnd, setIsPlaying]);
+
   if (!audioUrl || !playingSong) return null;
   return (
     <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'white', borderTopWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, zIndex: 99 }}>
@@ -76,27 +116,67 @@ const MusicPlayerBar: React.FC<Props> = ({
               />
             </div>
           )}
+          {/* 앱에서는 expo-av로 오디오가 실제로 재생됨. 아래에 재생/일시정지 버튼 추가 */}
           {Platform.OS !== 'web' && audioUrl && (
-            <Text style={{ color: '#888', fontSize: 13, marginTop: 8 }}>앱에서는 오디오 재생 기능을 지원하지 않습니다.</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (soundRef.current) {
+                    if (isPlaying) {
+                      await soundRef.current.pauseAsync();
+                    } else {
+                      await soundRef.current.playAsync();
+                    }
+                  }
+                }}
+                style={{ marginRight: 12, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
+              >
+                <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={28} color={'#6366f1'} />
+              </TouchableOpacity>
+              <Text style={{ color: '#6366f1', fontSize: 13 }}>{isPlaying ? '재생 중' : '일시정지'}</Text>
+            </View>
           )}
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 16 }}>
           <TouchableOpacity
-            onPress={() => {
+            onPress={async () => {
               if (!selectedPlaylist || !playingSong) return;
               const items = selectedPlaylist.items;
               const idx = items.findIndex((s) => s.video_id === playingSong.video_id);
+              let nextSong = null;
               if (isShuffle) {
                 const remain = items.filter((s) => s.video_id !== playingSong.video_id);
                 if (remain.length > 0) {
-                  const prev = remain[Math.floor(Math.random() * remain.length)];
-                  setPlayingSong(prev);
-                  setAudioUrl(`https://youtube.ssrhouse.store/api/play?id=${prev.video_id}`);
-                  setIsPlaying(true);
+                  nextSong = remain[Math.floor(Math.random() * remain.length)];
                 }
               } else if (idx > 0) {
-                setPlayingSong(items[idx - 1]);
-                setAudioUrl(`https://youtube.ssrhouse.store/api/play?id=${items[idx - 1].video_id}`);
+                nextSong = items[idx - 1];
+              }
+              if (nextSong) {
+                setPlayingSong(nextSong);
+                const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}`;
+                if (Platform.OS === 'web') {
+                  setAudioUrl(playUrl);
+                } else {
+                  const token = await SecureStore.getItemAsync('token');
+                  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+                  console.log('[api/play] token:', token);
+                  console.log('[api/play] headers:', headers);
+                  try {
+                    const res = await fetch(playUrl, { headers });
+                    console.log('[api/play] response status:', res.status);
+                    if (res.ok) {
+                      const blob = await res.blob();
+                      const blobUrl = URL.createObjectURL(blob);
+                      setAudioUrl(blobUrl); // blob URL로 오디오 재생
+                    } else {
+                      setAudioUrl('');
+                    }
+                  } catch (err) {
+                    console.log('[api/play] fetch 에러:', err);
+                    setAudioUrl('');
+                  }
+                }
                 setIsPlaying(true);
               }
             }}
@@ -106,21 +186,44 @@ const MusicPlayerBar: React.FC<Props> = ({
             <Icon name="skip-previous" size={28} color={playingSong ? '#222' : '#bbb'} />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => {
+            onPress={async () => {
               if (!selectedPlaylist || !playingSong) return;
               const items = selectedPlaylist.items;
               const idx = items.findIndex((s) => s.video_id === playingSong.video_id);
+              let nextSong = null;
               if (isShuffle) {
                 const remain = items.filter((s) => s.video_id !== playingSong.video_id);
                 if (remain.length > 0) {
-                  const next = remain[Math.floor(Math.random() * remain.length)];
-                  setPlayingSong(next);
-                  setAudioUrl(`https://youtube.ssrhouse.store/api/play?id=${next.video_id}`);
-                  setIsPlaying(true);
+                  nextSong = remain[Math.floor(Math.random() * remain.length)];
                 }
               } else if (idx < items.length - 1) {
-                setPlayingSong(items[idx + 1]);
-                setAudioUrl(`https://youtube.ssrhouse.store/api/play?id=${items[idx + 1].video_id}`);
+                nextSong = items[idx + 1];
+              }
+              if (nextSong) {
+                setPlayingSong(nextSong);
+                const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}`;
+                if (Platform.OS === 'web') {
+                  setAudioUrl(playUrl);
+                } else {
+                  const token = await SecureStore.getItemAsync('token');
+                  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+                  console.log('[api/play] token:', token);
+                  console.log('[api/play] headers:', headers);
+                  try {
+                    const res = await fetch(playUrl, { headers });
+                    console.log('[api/play] response status:', res.status);
+                    if (res.ok) {
+                      const blob = await res.blob();
+                      const blobUrl = URL.createObjectURL(blob);
+                      setAudioUrl(blobUrl); // blob URL로 오디오 재생
+                    } else {
+                      setAudioUrl('');
+                    }
+                  } catch (err) {
+                    console.log('[api/play] fetch 에러:', err);
+                    setAudioUrl('');
+                  }
+                }
                 setIsPlaying(true);
               }
             }}
