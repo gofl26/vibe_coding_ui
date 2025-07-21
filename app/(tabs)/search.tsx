@@ -194,27 +194,28 @@ export default function SearchScreen() {
     <LinearGradient colors={['#e0e7ff', '#fff']} style={{ flex: 1 }}>
       <View style={{ flex: 1, alignItems: 'center', padding: 24 }}>
         <View style={{ width: '100%', maxWidth: 420, backgroundColor: 'white', borderRadius: 16, padding: 24, marginTop: 40, marginBottom: 24, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 12, elevation: 3 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, flex: 1 }}>
-            <TextInput
-              placeholder="노래와 아티스트 검색"
-              value={query}
-              onChangeText={setQuery}
-              style={{
-                flex: 1,
-                borderWidth: 1,
-                borderColor: '#e5e7eb',
-                borderRadius: 8,
-                padding: 14,
-                fontSize: 16,
-                backgroundColor: '#f9fafb',
-                marginRight: 8,
-                height: 48,
-                minWidth: 0,
-              }}
-              placeholderTextColor="#aaa"
-              onSubmitEditing={handleSearch}
-              returnKeyType="search"
-            />
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8, flex: 1, height: 48 }}>
+            <View style={{ flex: 1, justifyContent: 'center' }}>
+              <TextInput
+                placeholder="노래와 아티스트 검색"
+                value={query}
+                onChangeText={setQuery}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#e5e7eb',
+                  borderRadius: 8,
+                  padding: 14,
+                  fontSize: 16,
+                  backgroundColor: '#f9fafb',
+                  marginRight: 8,
+                  height: 48,
+                  minWidth: 0,
+                }}
+                placeholderTextColor="#aaa"
+                onSubmitEditing={handleSearch}
+                returnKeyType="search"
+              />
+            </View>
             <TouchableOpacity
               onPress={handleSearch}
               style={{
@@ -422,37 +423,8 @@ export default function SearchScreen() {
                             } else {
                               token = await SecureStore.getItemAsync('token');
                             }
-                            const playUrl = `https://youtube.ssrhouse.store/api/play?id=${selectedSong?.id?.videoId}`;
-                            if (Platform.OS === 'web') {
-                              try {
-                                const res = await fetch(playUrl, {
-                                  headers: token ? { Authorization: `Bearer ${token}` } : {},
-                                });
-                                if (res.ok) {
-                                  const blob = await res.blob();
-                                  const url = URL.createObjectURL(blob);
-                                  setAudioUrl(url);
-                                } else {
-                                  setAudioUrl(null);
-                                }
-                              } catch {
-                                setAudioUrl(null);
-                              }
-                            } else {
-                              try {
-                                const res = await fetch(playUrl, {
-                                  headers: token ? { Authorization: `Bearer ${token}` } : {},
-                                });
-                                if (res.ok) {
-                                  await res.blob(); // blob 미사용, 필요시 별도 처리
-                                  setAudioUrl(playUrl); // 실제 오디오 재생은 별도 구현 필요
-                                } else {
-                                  setAudioUrl('');
-                                }
-                              } catch {
-                                setAudioUrl('');
-                              }
-                            }
+                            const playUrl = `https://youtube.ssrhouse.store/api/play?id=${selectedSong?.id?.videoId}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                            setAudioUrl(playUrl);
                             setIsPlaying(true);
                           }}
                         >

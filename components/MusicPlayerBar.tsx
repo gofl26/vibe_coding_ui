@@ -1,3 +1,4 @@
+import Slider from '@react-native-community/slider';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import * as SecureStore from 'expo-secure-store';
 import React from 'react';
@@ -54,44 +55,60 @@ const MusicPlayerBar: React.FC<Props> = ({
   onEnd,
 }) => {
   const soundRef = React.useRef<Audio.Sound | null>(null);
+  const [durationMillis, setDurationMillis] = React.useState(0);
+  const [positionMillis, setPositionMillis] = React.useState(0);
+  const [isSeeking, setIsSeeking] = React.useState(false);
+  const [pendingSeek, setPendingSeek] = React.useState<number | null>(null);
+  const [volume, setVolume] = React.useState(1);
 
   // 앱에서 오디오 재생
   React.useEffect(() => {
     if (Platform.OS !== 'web' && audioUrl) {
       (async () => {
         if (soundRef.current) {
-          console.log('[expo-av] 기존 사운드 언로드');
           await soundRef.current.unloadAsync();
           soundRef.current = null;
         }
         try {
-          console.log('[expo-av] Audio.Sound.createAsync 호출', audioUrl);
           const { sound } = await Audio.Sound.createAsync(
             { uri: audioUrl },
-            { shouldPlay: true },
+            { shouldPlay: true, volume },
             (status: AVPlaybackStatus) => {
-              console.log('[expo-av] status 콜백', status);
               if ('didJustFinish' in status && status.didJustFinish && onEnd) onEnd();
               if ('isPlaying' in status) setIsPlaying(status.isPlaying ?? false);
+              if ('durationMillis' in status && typeof status.durationMillis === 'number') setDurationMillis(status.durationMillis);
+              if ('positionMillis' in status && typeof status.positionMillis === 'number') setPositionMillis(status.positionMillis);
             }
           );
           soundRef.current = sound;
-          console.log('[expo-av] soundRef.current 할당 완료');
         } catch (err) {
-          console.log('[expo-av] Audio.Sound.createAsync 에러', err);
+          // ignore
         }
       })();
     }
     return () => {
       if (soundRef.current) {
-        console.log('[expo-av] 언마운트 시 사운드 언로드');
         soundRef.current.unloadAsync();
         soundRef.current = null;
       }
     };
-  }, [audioUrl, onEnd, setIsPlaying]);
+  }, [audioUrl, onEnd, setIsPlaying, volume]);
+
+  // 볼륨 변경
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' && soundRef.current) {
+      soundRef.current.setVolumeAsync(volume);
+    }
+  }, [volume]);
 
   if (!audioUrl || !playingSong) return null;
+  // 시간 포맷
+  const formatTime = (ms: number) => {
+    const sec = Math.floor(ms / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
   return (
     <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'white', borderTopWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, zIndex: 99 }}>
       <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
@@ -116,24 +133,63 @@ const MusicPlayerBar: React.FC<Props> = ({
               />
             </div>
           )}
-          {/* 앱에서는 expo-av로 오디오가 실제로 재생됨. 아래에 재생/일시정지 버튼 추가 */}
+          {/* 앱: 진행바/시킹/볼륨/시간표시 */}
           {Platform.OS !== 'web' && audioUrl && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={async () => {
-                  if (soundRef.current) {
-                    if (isPlaying) {
-                      await soundRef.current.pauseAsync();
-                    } else {
-                      await soundRef.current.playAsync();
+            <View style={{ marginTop: 8 }}>
+              {/* 진행바/시킹 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 12, color: '#888', width: 40, textAlign: 'right' }}>{formatTime(positionMillis)}</Text>
+                <Slider
+                  style={{ flex: 1, marginHorizontal: 8, height: 28 }}
+                  minimumValue={0}
+                  maximumValue={durationMillis}
+                  value={isSeeking && pendingSeek !== null ? pendingSeek : positionMillis}
+                  minimumTrackTintColor="#6366f1"
+                  maximumTrackTintColor="#ddd"
+                  thumbTintColor="#6366f1"
+                  onValueChange={val => {
+                    setIsSeeking(true);
+                    setPendingSeek(val);
+                  }}
+                  onSlidingComplete={async val => {
+                    setIsSeeking(false);
+                    setPendingSeek(null);
+                    if (soundRef.current) {
+                      await soundRef.current.setPositionAsync(val);
                     }
-                  }
-                }}
-                style={{ marginRight: 12, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
-              >
-                <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={28} color={'#6366f1'} />
-              </TouchableOpacity>
-              <Text style={{ color: '#6366f1', fontSize: 13 }}>{isPlaying ? '재생 중' : '일시정지'}</Text>
+                  }}
+                />
+                <Text style={{ fontSize: 12, color: '#888', width: 40, textAlign: 'left' }}>{formatTime(durationMillis)}</Text>
+              </View>
+              {/* 재생/일시정지, 볼륨 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (soundRef.current) {
+                      if (isPlaying) {
+                        await soundRef.current.pauseAsync();
+                      } else {
+                        await soundRef.current.playAsync();
+                      }
+                    }
+                  }}
+                  style={{ marginRight: 12, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
+                >
+                  <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={28} color={'#6366f1'} />
+                </TouchableOpacity>
+                <Text style={{ color: '#6366f1', fontSize: 13, marginRight: 12 }}>{isPlaying ? '재생 중' : '일시정지'}</Text>
+                <Icon name="volume-up" size={22} color="#6366f1" style={{ marginRight: 4 }} />
+                <Slider
+                  style={{ width: 80, height: 24 }}
+                  minimumValue={0}
+                  maximumValue={1}
+                  value={volume}
+                  minimumTrackTintColor="#6366f1"
+                  maximumTrackTintColor="#ddd"
+                  thumbTintColor="#6366f1"
+                  onValueChange={setVolume}
+                />
+              </View>
             </View>
           )}
         </View>
@@ -153,30 +209,15 @@ const MusicPlayerBar: React.FC<Props> = ({
                 nextSong = items[idx - 1];
               }
               if (nextSong) {
+                let token: string | null = null;
                 setPlayingSong(nextSong);
-                const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}`;
                 if (Platform.OS === 'web') {
-                  setAudioUrl(playUrl);
+                  token = window.localStorage.getItem('token');
                 } else {
-                  const token = await SecureStore.getItemAsync('token');
-                  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-                  console.log('[api/play] token:', token);
-                  console.log('[api/play] headers:', headers);
-                  try {
-                    const res = await fetch(playUrl, { headers });
-                    console.log('[api/play] response status:', res.status);
-                    if (res.ok) {
-                      const blob = await res.blob();
-                      const blobUrl = URL.createObjectURL(blob);
-                      setAudioUrl(blobUrl); // blob URL로 오디오 재생
-                    } else {
-                      setAudioUrl('');
-                    }
-                  } catch (err) {
-                    console.log('[api/play] fetch 에러:', err);
-                    setAudioUrl('');
-                  }
+                  token = await SecureStore.getItemAsync('token');
                 }
+                const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                setAudioUrl(playUrl);
                 setIsPlaying(true);
               }
             }}
@@ -200,30 +241,15 @@ const MusicPlayerBar: React.FC<Props> = ({
                 nextSong = items[idx + 1];
               }
               if (nextSong) {
+                let token: string | null = null;
                 setPlayingSong(nextSong);
-                const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}`;
                 if (Platform.OS === 'web') {
-                  setAudioUrl(playUrl);
+                  token = window.localStorage.getItem('token');
                 } else {
-                  const token = await SecureStore.getItemAsync('token');
-                  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-                  console.log('[api/play] token:', token);
-                  console.log('[api/play] headers:', headers);
-                  try {
-                    const res = await fetch(playUrl, { headers });
-                    console.log('[api/play] response status:', res.status);
-                    if (res.ok) {
-                      const blob = await res.blob();
-                      const blobUrl = URL.createObjectURL(blob);
-                      setAudioUrl(blobUrl); // blob URL로 오디오 재생
-                    } else {
-                      setAudioUrl('');
-                    }
-                  } catch (err) {
-                    console.log('[api/play] fetch 에러:', err);
-                    setAudioUrl('');
-                  }
+                  token = await SecureStore.getItemAsync('token');
                 }
+                const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                setAudioUrl(playUrl);
                 setIsPlaying(true);
               }
             }}

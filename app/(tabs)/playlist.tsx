@@ -232,25 +232,8 @@ export default function PlaylistTab() {
                       } else {
                         token = await SecureStore.getItemAsync('token');
                       }
-                      const playUrl = `https://youtube.ssrhouse.store/api/play?id=${song.video_id}`;
-                      if (Platform.OS === 'web') {
-                        try {
-                          const res = await fetch(playUrl, {
-                            headers: token ? { Authorization: `Bearer ${token}` } : {},
-                          });
-                          if (res.ok) {
-                            const blob = await res.blob();
-                            const url = URL.createObjectURL(blob);
-                            setAudioUrl(url);
-                          } else {
-                            setAudioUrl(null);
-                          }
-                        } catch {
-                          setAudioUrl(null);
-                        }
-                      } else {
-                        setAudioUrl(playUrl);
-                      }
+                      const playUrl = `https://youtube.ssrhouse.store/api/play?id=${song.video_id}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                      setAudioUrl(playUrl);
                       setLastPlayedPlaylist(selectedPlaylist);
                     }}
                     style={{
@@ -318,7 +301,7 @@ export default function PlaylistTab() {
               } else {
                 token = await SecureStore.getItemAsync('token');
               }
-              const getPlayUrl = (videoId: string) => `https://youtube.ssrhouse.store/api/play?id=${videoId}`;
+              const getPlayUrl = (videoId: string) => `https://youtube.ssrhouse.store/api/play?id=${videoId}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
               let nextSong = null;
               if (isShuffle) {
                 const remain = items.filter((s: any) => s.video_id !== playingSong.video_id);
@@ -334,9 +317,7 @@ export default function PlaylistTab() {
                 setPlayingSong(nextSong);
                 if (Platform.OS === 'web') {
                   try {
-                    const res = await fetch(getPlayUrl(nextSong.video_id), {
-                      headers: token ? { Authorization: `Bearer ${token}` } : {},
-                    });
+                    const res = await fetch(getPlayUrl(nextSong.video_id));
                     if (res.ok) {
                       const blob = await res.blob();
                       const url = URL.createObjectURL(blob);
