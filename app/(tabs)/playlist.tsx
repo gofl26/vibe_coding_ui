@@ -285,7 +285,10 @@ export default function PlaylistTab() {
           setIsPlaying={setIsPlaying}
           selectedPlaylist={lastPlayedPlaylist}
           isShuffle={isShuffle}
-          setIsShuffle={setIsShuffle}
+          setIsShuffle={(v) => {
+            // 셔플 토글 시 곡/URL/재생상태는 건드리지 않는다
+            setIsShuffle(v);
+          }}
           setPlayingSong={setPlayingSong}
           setAudioUrl={setAudioUrl}
           durationToSeconds={durationToSeconds}

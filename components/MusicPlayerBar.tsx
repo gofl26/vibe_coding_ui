@@ -61,14 +61,23 @@ const MusicPlayerBar: React.FC<Props> = ({
   const [pendingSeek, setPendingSeek] = React.useState<number | null>(null);
   const [volume, setVolume] = React.useState(1);
 
-  // 앱에서 오디오 재생
+  // 앱에서 오디오 재생 (이전 사운드 완전 언로드 후 새로 생성)
   React.useEffect(() => {
+    let isMounted = true;
+    let unloadPromise: Promise<AVPlaybackStatus> | null = null;
     if (Platform.OS !== 'web' && audioUrl) {
       (async () => {
+        // 이전 사운드 언로드를 반드시 await
         if (soundRef.current) {
-          await soundRef.current.unloadAsync();
+          try {
+            unloadPromise = soundRef.current.unloadAsync();
+            await unloadPromise;
+          } catch {
+            // ignore
+          }
           soundRef.current = null;
         }
+        if (!isMounted) return;
         try {
           const { sound } = await Audio.Sound.createAsync(
             { uri: audioUrl },
@@ -80,16 +89,29 @@ const MusicPlayerBar: React.FC<Props> = ({
               if ('positionMillis' in status && typeof status.positionMillis === 'number') setPositionMillis(status.positionMillis);
             }
           );
-          soundRef.current = sound;
-        } catch (err) {
+          if (isMounted) {
+            soundRef.current = sound;
+          } else {
+            // 컴포넌트가 언마운트된 경우 바로 언로드
+            await sound.unloadAsync();
+          }
+        } catch {
           // ignore
         }
       })();
     }
     return () => {
+      isMounted = false;
       if (soundRef.current) {
-        soundRef.current.unloadAsync();
-        soundRef.current = null;
+        // 언로드가 진행 중이면 끝날 때까지 기다림
+        if (unloadPromise) {
+          unloadPromise.then(() => {
+            soundRef.current = null;
+          });
+        } else {
+          soundRef.current.unloadAsync();
+          soundRef.current = null;
+        }
       }
     };
   }, [audioUrl, onEnd, setIsPlaying, volume]);
@@ -133,14 +155,99 @@ const MusicPlayerBar: React.FC<Props> = ({
               />
             </div>
           )}
-          {/* 앱: 진행바/시킹/볼륨/시간표시 */}
+          {/* 앱: 진행바/시킹/볼륨/시간표시 - 버튼 묶음을 위로, 슬라이더를 넓게 */}
           {Platform.OS !== 'web' && audioUrl && (
             <View style={{ marginTop: 8 }}>
+              {/* 버튼 묶음 (이전/재생/다음/셔플) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (!selectedPlaylist || !playingSong) return;
+                    const items = selectedPlaylist.items;
+                    const idx = items.findIndex((s) => s.video_id === playingSong.video_id);
+                    let nextSong = null;
+                    if (isShuffle) {
+                      const remain = items.filter((s) => s.video_id !== playingSong.video_id);
+                      if (remain.length > 0) {
+                        nextSong = remain[Math.floor(Math.random() * remain.length)];
+                      }
+                    } else if (idx > 0) {
+                      nextSong = items[idx - 1];
+                    }
+                    if (nextSong) {
+                      let token: string | null = null;
+                      setPlayingSong(nextSong);
+                      if (Platform.OS === 'web') {
+                        token = window.localStorage.getItem('token');
+                      } else {
+                        token = await SecureStore.getItemAsync('token');
+                      }
+                      const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                      setAudioUrl(playUrl);
+                      setIsPlaying(true);
+                    }
+                  }}
+                  style={{ marginHorizontal: 8, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
+                >
+                  <Icon name="skip-previous" size={28} color={'#6366f1'} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (soundRef.current) {
+                      if (isPlaying) {
+                        await soundRef.current.pauseAsync();
+                      } else {
+                        await soundRef.current.playAsync();
+                      }
+                    }
+                  }}
+                  style={{ marginHorizontal: 8, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
+                >
+                  <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={32} color={'#6366f1'} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (!selectedPlaylist || !playingSong) return;
+                    const items = selectedPlaylist.items;
+                    const idx = items.findIndex((s) => s.video_id === playingSong.video_id);
+                    let nextSong = null;
+                    if (isShuffle) {
+                      const remain = items.filter((s) => s.video_id !== playingSong.video_id);
+                      if (remain.length > 0) {
+                        nextSong = remain[Math.floor(Math.random() * remain.length)];
+                      }
+                    } else if (idx < items.length - 1) {
+                      nextSong = items[idx + 1];
+                    }
+                    if (nextSong) {
+                      let token: string | null = null;
+                      setPlayingSong(nextSong);
+                      if (Platform.OS === 'web') {
+                        token = window.localStorage.getItem('token');
+                      } else {
+                        token = await SecureStore.getItemAsync('token');
+                      }
+                      const playUrl = `https://youtube.ssrhouse.store/api/play?id=${nextSong.video_id}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                      setAudioUrl(playUrl);
+                      setIsPlaying(true);
+                    }
+                  }}
+                  style={{ marginHorizontal: 8, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
+                >
+                  <Icon name="skip-next" size={28} color={'#6366f1'} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setIsShuffle((s) => !s)}
+                  style={{ marginHorizontal: 8, padding: 8, borderRadius: 8, backgroundColor: isShuffle ? '#6366f1' : '#e0e7ff' }}
+                >
+                  <Icon name={isShuffle ? 'shuffle' : 'repeat'} size={28} color={isShuffle ? '#fff' : '#6366f1'} />
+                </TouchableOpacity>
+              </View>
               {/* 진행바/시킹 */}
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ fontSize: 12, color: '#888', width: 40, textAlign: 'right' }}>{formatTime(positionMillis)}</Text>
                 <Slider
-                  style={{ flex: 1, marginHorizontal: 8, height: 28 }}
+                  style={{ flex: 1, marginHorizontal: 8, height: 32 }}
                   minimumValue={0}
                   maximumValue={durationMillis}
                   value={isSeeking && pendingSeek !== null ? pendingSeek : positionMillis}
@@ -161,26 +268,11 @@ const MusicPlayerBar: React.FC<Props> = ({
                 />
                 <Text style={{ fontSize: 12, color: '#888', width: 40, textAlign: 'left' }}>{formatTime(durationMillis)}</Text>
               </View>
-              {/* 재생/일시정지, 볼륨 */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                <TouchableOpacity
-                  onPress={async () => {
-                    if (soundRef.current) {
-                      if (isPlaying) {
-                        await soundRef.current.pauseAsync();
-                      } else {
-                        await soundRef.current.playAsync();
-                      }
-                    }
-                  }}
-                  style={{ marginRight: 12, padding: 8, borderRadius: 8, backgroundColor: '#e0e7ff' }}
-                >
-                  <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={28} color={'#6366f1'} />
-                </TouchableOpacity>
-                <Text style={{ color: '#6366f1', fontSize: 13, marginRight: 12 }}>{isPlaying ? '재생 중' : '일시정지'}</Text>
+              {/* 볼륨 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, justifyContent: 'flex-end' }}>
                 <Icon name="volume-up" size={22} color="#6366f1" style={{ marginRight: 4 }} />
                 <Slider
-                  style={{ width: 80, height: 24 }}
+                  style={{ width: 100, height: 24 }}
                   minimumValue={0}
                   maximumValue={1}
                   value={volume}
